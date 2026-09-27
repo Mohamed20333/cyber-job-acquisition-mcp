@@ -1,20 +1,56 @@
-# Cyber Job Acquisition Engine — Remote MCP
+# Cyber Job Acquisition Engine V2
 
-A small MCP server for Claude focused on remote cybersecurity job research, fit analysis, outreach drafting and application tracking.
+Evidence-first cybersecurity job acquisition automation engine.
 
-## Local run
-Python 3.10+:
+## Architecture
 
-    python -m venv .venv
-    # Windows: .venv\\Scripts\\activate
-    # macOS/Linux: source .venv/bin/activate
-    pip install -r requirements.txt
-    python server.py
+Cloudflare Worker
+→ MCP tools
+→ Cloudflare D1
+→ Public job sources
+→ Persistent opportunity/application/follow-up tracking
 
-The MCP endpoint is typically `http://localhost:8000/mcp`.
+## Workflow
 
-## Claude remote connector
-A Claude custom remote connector needs a publicly reachable HTTPS endpoint. Localhost will not work from Anthropic's cloud. Deploy the server behind HTTPS, add authentication, then use the resulting `/mcp` URL in Claude → Connectors → Add custom connector.
+AUTO DISCOVER
+→ VERIFY
+→ DEDUPLICATE
+→ ANALYZE
+→ MATCH
+→ PRIORITIZE
+→ RESEARCH
+→ DRAFT OUTREACH
+→ CV DECISION
+→ HUMAN REVIEW
+→ TRACK
+→ FOLLOW-UP
 
-## Production hardening
-Add OAuth/token authentication, HTTPS, persistent DB, request logging, abuse protection, and environment-based secrets before public deployment.. 
+## Current discovery sources
+
+- Remotive
+- Arbeitnow
+
+The engine only uses public sources and does not require logged-in LinkedIn access.
+
+## Safety
+
+The engine does not:
+
+- scrape logged-in LinkedIn
+- send automated LinkedIn messages
+- send connection spam
+- bypass CAPTCHA
+- steal sessions or cookies
+- evade rate limits
+- fabricate candidate experience
+- fabricate certifications
+- automatically submit external applications
+
+External outreach and applications require human review.
+
+## Cloudflare D1 setup
+
+Create a D1 database:
+
+```bash
+npx wrangler d1 create cyber-job-acquisition-db
