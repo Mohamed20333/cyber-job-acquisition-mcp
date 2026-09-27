@@ -2,105 +2,534 @@ import { createMcpHandler } from "agents/mcp/server";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-function createServer() {
-  const server = new McpServer({
-    name: "Cyber Job Acquisition Engine",
-    version: "1.0.0",
+interface Env {
+  DB: D1Database;
+}
+
+type Job = {
+  source: string;
+  external_id?: string;
+  url: string;
+  title: string;
+  company?: string;
+  location?: string;
+  remote?: boolean;
+  description?: string;
+  posted_at?: string;
+};
+
+const TARGET_ROLES = [
+  "red team",
+  "penetration testing",
+  "ethical hacking",
+  "cybersecurity",
+  "soc analyst",
+  "security analyst",
+  "security engineer",
+  "cybersecurity engineer",
+  "cybersecurity intern",
+  "cybersecurity trainee",
+  "vulnerability management",
+  "application security",
+];
+
+const VERIFIED_SKILLS = [
+  "cybersecurity",
+  "network security",
+  "linux",
+  "kali linux",
+  "burp suite",
+  "hashcat",
+  "subfinder",
+  "python",
+  "nist",
+  "ccna",
+  "ethical hacking",
+  "penetration testing",
+  "red team",
+  "ctf",
+];
+
+function now() {
+  return new Date().toISOString();
+}
+
+function normalizeUrl(url: string) {
+  try {
+    const u = new URL(url);
+    u.hash = "";
+    u.searchParams.delete("utm_source");
+    u.searchParams.delete("utm_medium");
+    u.searchParams.delete("utm_campaign");
+    u.searchParams.delete("utm_term");
+    u.searchParams.delete("utm_content");
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return url.trim();
+  }
+}
+
+function text(value: unknown) {
+  return String(value ?? "").toLowerCase();
+}
+
+function analyzeJob(job: Job) {
+  const haystack = `${job.title}\n${job.description ?? ""}`.toLowerCase();
+
+  const matchedRoles = TARGET_ROLES.filter((role) =>
+    haystack.includes(role),
+  );
+
+  const matchedSkills = VERIFIED_SKILLS.filter((skill) =>
+    haystack.includes(skill),
+  );
+
+  const juniorSignals = [
+    "junior",
+    "entry level",
+    "entry-level",
+    "intern",
+    "internship",
+    "trainee",
+    "graduate",
+    "student",
+  ].filter((x) => haystack.includes(x));
+
+  const seniorSignals = [
+    "senior",
+    "lead",
+    "principal",
+    "manager",
+    "director",
+    "head of",
+  ].filter((x) => haystack.includes(x));
+
+  return {
+    matched_roles: matchedRoles,
+    matched_skills: matchedSkills,
+    junior_signals: juniorSignals,
+    senior_signals: seniorSignals,
+  };
+}
+
+function matchScore(job: Job) {
+  const analysis = analyzeJob(job);
+
+  let score = 0;
+
+  if (analysis.matched_roles.length > 0) {
+    score += 40;
+  }
+
+  score += Math.min(35, analysis.matched_skills.length * 5);
+
+  if (analysis.junior_signals.length > 0) {
+    score += 20;
+  }
+
+  if (job.remote) {
+    score += 5;
+  }
+
+  return Math.min(100, score);
+}
+
+async function fetchRemotive(): Promise<Job[]> {
+  const response = await fetch(
+    "https://remotive.com/api/remote-jobs?category=cyber-security",
+    {
+      headers: {
+        "User-Agent": "CyberJobAcquisitionEngine/2.0",
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Remotive returned ${response.status}`);
+  }
+
+  const data = await response.json<any>();
+
+  return (data.jobs ?? []).map((job: any) => ({
+    source: "remotive",
+    external_id: String(job.id),
+    url: job.url,
+    title: job.title,
+    company: job.company_name,
+    location: job.candidate_required_location,
+    remote: true,
+    description: job.description,
+    posted_at: job.publication_date,
+  }));
+}
+
+async function fetchArbeitnow(): Promise<Job[]> {
+  const response = await fetch("https://www.arbeitnow.com/api/job-board-api", {
+    headers: {
+      "User-Agent": "CyberJobAcquisitionEngine/2.0",
+    },
   });
 
-  // --------------------------------------------------
-  // 1. HEALTH
-  // --------------------------------------------------
+  if (!response.ok) {
+    throw new Error(`Arbeitnow returned ${response.status}`);
+  }
+
+  const data = await response.json<any>();
+
+  return (data.data ?? []).map((job: any) => ({
+    source: "arbeitnow",
+    external_id: String(job.slug ?? job.id ?? ""),
+    url: job.url,
+    title: job.title,
+    company: job.company_name,
+    location: job.location,
+    remote: Boolean(job.remote),
+    description: job.description,
+    posted_at: job.created_at
+      ? new Date(job.created_at * 1000).toISOString()
+      : undefined,
+  }));
+}
+
+async function discoverJobs() {
+  const results = await Promise.allSettled([
+    fetchRemotive(),
+    fetchArbeitnow(),
+  ]);
+
+  const jobs: Job[] = [];
+
+  for (const result of results) {
+    if (result.status === "fulfilled") {
+      jobs.push(...result.value);
+    }
+  }
+
+  const unique = new Map<string, Job>();
+
+  for (const job of jobs) {
+    if (!job.url || !job.title) continue;
+
+    const normalized = normalizeUrl(job.url);
+
+    if (!unique.has(normalized)) {
+      unique.set(normalized, {
+        ...job,
+        url: normalized,
+      });
+    }
+  }
+
+  return {
+    jobs: [...unique.values()],
+    source_results: results.map((result) => result.status),
+  };
+}
+
+async function saveOpportunity(db: D1Database, job: Job) {
+  const timestamp = now();
+  const score = matchScore(job);
+  const analysis = analyzeJob(job);
+
+  const result = await db
+    .prepare(
+      `
+      INSERT INTO opportunities (
+        source,
+        external_id,
+        canonical_url,
+        title,
+        company,
+        location,
+        remote,
+        description,
+        posted_at,
+        discovered_at,
+        verified_at,
+        status,
+        match_score,
+        match_evidence,
+        verification_evidence,
+        last_checked_at,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(canonical_url) DO UPDATE SET
+        last_checked_at = excluded.last_checked_at,
+        updated_at = excluded.updated_at,
+        description = excluded.description,
+        match_score = excluded.match_score,
+        match_evidence = excluded.match_evidence
+      `,
+    )
+    .bind(
+      job.source,
+      job.external_id ?? null,
+      job.url,
+      job.title,
+      job.company ?? null,
+      job.location ?? null,
+      job.remote ? 1 : 0,
+      job.description ?? null,
+      job.posted_at ?? null,
+      timestamp,
+      timestamp,
+      "VERIFIED",
+      score,
+      JSON.stringify(analysis),
+      JSON.stringify({
+        source: job.source,
+        checked_at: timestamp,
+        url: job.url,
+      }),
+      timestamp,
+      timestamp,
+      timestamp,
+    )
+    .run();
+
+  return result;
+}
+
+async function runDiscoveryCycle(db: D1Database) {
+  const started = now();
+
+  const run = await db
+    .prepare(
+      `
+      INSERT INTO discovery_runs
+      (started_at, status, sources)
+      VALUES (?, ?, ?)
+      `,
+    )
+    .bind(
+      started,
+      "RUNNING",
+      JSON.stringify(["remotive", "arbeitnow"]),
+    )
+    .run();
+
+  const runId = Number(run.meta.last_row_id);
+
+  try {
+    const discovered = await discoverJobs();
+
+    let newCount = 0;
+    let verifiedCount = 0;
+
+    for (const job of discovered.jobs) {
+      const existing = await db
+        .prepare(
+          `
+          SELECT id
+          FROM opportunities
+          WHERE canonical_url = ?
+          `,
+        )
+        .bind(job.url)
+        .first();
+
+      await saveOpportunity(db, job);
+
+      if (existing) {
+        verifiedCount++;
+      } else {
+        newCount++;
+      }
+    }
+
+    await db
+      .prepare(
+        `
+        UPDATE discovery_runs
+        SET
+          finished_at = ?,
+          status = ?,
+          discovered_count = ?,
+          new_count = ?,
+          verified_count = ?
+        WHERE id = ?
+        `,
+      )
+      .bind(
+        now(),
+        "COMPLETED",
+        discovered.jobs.length,
+        newCount,
+        verifiedCount,
+        runId,
+      )
+      .run();
+
+    return {
+      status: "COMPLETED",
+      discovered: discovered.jobs.length,
+      new: newCount,
+      verified: verifiedCount,
+      sources: discovered.source_results,
+    };
+  } catch (error) {
+    await db
+      .prepare(
+        `
+        UPDATE discovery_runs
+        SET
+          finished_at = ?,
+          status = ?,
+          error = ?
+        WHERE id = ?
+        `,
+      )
+      .bind(
+        now(),
+        "FAILED",
+        error instanceof Error ? error.message : String(error),
+        runId,
+      )
+      .run();
+
+    throw error;
+  }
+}
+
+function createServer(env: Env) {
+  const server = new McpServer({
+    name: "Cyber Job Acquisition Engine",
+    version: "2.0.0",
+  });
 
   server.registerTool(
     "health",
     {
-      description: "Check whether the Cyber Job Acquisition MCP server is online.",
+      description: "Return engine and database health.",
       inputSchema: {},
     },
-    async () => ({
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            status: "ok",
-            service: "cyber-job-acquisition-engine",
-            version: "1.0.0",
-            timestamp: new Date().toISOString(),
-          }),
-        },
-      ],
-    }),
+    async () => {
+      let database = "unknown";
+
+      try {
+        await env.DB.prepare("SELECT 1").first();
+        database = "ok";
+      } catch {
+        database = "error";
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              status: database === "ok" ? "ok" : "degraded",
+              service: "cyber-job-acquisition-engine",
+              version: "2.0.0",
+              database,
+              discovery_sources: ["remotive", "arbeitnow"],
+              timestamp: now(),
+            }),
+          },
+        ],
+      };
+    },
   );
 
-  // --------------------------------------------------
-  // 2. ANALYZE JOB
-  // --------------------------------------------------
+  server.registerTool(
+    "discover_jobs",
+    {
+      description:
+        "Discover cybersecurity jobs from configured public job sources and persist verified opportunities.",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const result = await runDiscoveryCycle(env.DB);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  status: "FAILED",
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : String(error),
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "list_opportunities",
+    {
+      description:
+        "List persisted cybersecurity opportunities ordered by match score.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).optional(),
+        minimum_score: z.number().int().min(0).max(100).optional(),
+      },
+    },
+    async ({ limit = 20, minimum_score = 0 }) => {
+      const result = await env.DB
+        .prepare(
+          `
+          SELECT *
+          FROM opportunities
+          WHERE COALESCE(match_score, 0) >= ?
+          ORDER BY COALESCE(match_score, 0) DESC, discovered_at DESC
+          LIMIT ?
+          `,
+        )
+        .bind(minimum_score, limit)
+        .all();
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result.results, null, 2),
+          },
+        ],
+      };
+    },
+  );
 
   server.registerTool(
     "analyze_job",
     {
       description:
-        "Analyze a cybersecurity job description and extract role, skills, requirements, seniority, location, remote status, and possible fit signals.",
+        "Analyze a job using only evidence present in the supplied description.",
       inputSchema: {
         title: z.string(),
         description: z.string(),
+        url: z.string().optional(),
       },
     },
-    async ({ title, description }) => {
-      const text = description.toLowerCase();
+    async ({ title, description, url }) => {
+      const job: Job = {
+        source: "manual",
+        url: url ?? "",
+        title,
+        description,
+      };
 
-      const skills = [
-        "penetration testing",
-        "ethical hacking",
-        "burp suite",
-        "kali linux",
-        "nmap",
-        "metasploit",
-        "web application security",
-        "red team",
-        "soc",
-        "siem",
-        "splunk",
-        "sentinel",
-        "incident response",
-        "network security",
-        "python",
-        "linux",
-        "active directory",
-        "cloud security",
-        "aws",
-        "azure",
-        "gcp",
-        "wireshark",
-        "tcp/ip",
-        "nist",
-        "iso 27001",
-      ];
-
-      const detectedSkills = skills.filter((skill) =>
-        text.includes(skill),
-      );
-
-      const juniorSignals = [
-        "junior",
-        "entry level",
-        "entry-level",
-        "intern",
-        "internship",
-        "trainee",
-        "graduate",
-        "student",
-      ];
-
-      const senioritySignals = juniorSignals.filter((signal) =>
-        text.includes(signal),
-      );
-
-      const remote =
-        text.includes("remote") ||
-        text.includes("work from home") ||
-        text.includes("distributed");
+      const analysis = analyzeJob(job);
 
       return {
         content: [
@@ -109,11 +538,9 @@ function createServer() {
             text: JSON.stringify(
               {
                 title,
-                detected_skills: detectedSkills,
-                junior_or_entry_signals: senioritySignals,
-                remote_signal: remote,
-                analysis_note:
-                  "This is an evidence-based extraction from the supplied job description. It does not invent requirements or candidate experience.",
+                url,
+                analysis,
+                score: matchScore(job),
               },
               null,
               2,
@@ -124,123 +551,26 @@ function createServer() {
     },
   );
 
-  // --------------------------------------------------
-  // 3. MATCH CANDIDATE
-  // --------------------------------------------------
-
   server.registerTool(
-    "match_candidate",
+    "save_opportunity",
     {
-      description:
-        "Compare a candidate profile against a cybersecurity job description without inventing experience, certifications, or employment history.",
+      description: "Persist a manually supplied opportunity.",
       inputSchema: {
-        job_description: z.string(),
-        candidate_profile: z.string(),
-      },
-    },
-    async ({ job_description, candidate_profile }) => {
-      const job = job_description.toLowerCase();
-      const candidate = candidate_profile.toLowerCase();
-
-      const keywords = [
-        "penetration testing",
-        "ethical hacking",
-        "red team",
-        "soc",
-        "siem",
-        "network security",
-        "cybersecurity",
-        "python",
-        "linux",
-        "kali linux",
-        "burp suite",
-        "nmap",
-        "wireshark",
-        "ctf",
-        "incident response",
-        "active directory",
-        "cloud",
-      ];
-
-      const matches = keywords.filter(
-        (keyword) =>
-          job.includes(keyword) && candidate.includes(keyword),
-      );
-
-      const jobRequirements = keywords.filter((keyword) =>
-        job.includes(keyword),
-      );
-
-      const missing = jobRequirements.filter(
-        (keyword) => !candidate.includes(keyword),
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                matched_keywords: matches,
-                potentially_missing_keywords: missing,
-                job_keywords_detected: jobRequirements,
-                methodology:
-                  "Keyword overlap only. Human review is required for final qualification decisions.",
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
-    },
-  );
-
-  // --------------------------------------------------
-  // 4. SCORE JOB
-  // --------------------------------------------------
-
-  server.registerTool(
-    "score_job",
-    {
-      description:
-        "Produce a transparent job-fit score based only on supplied evidence.",
-      inputSchema: {
+        source: z.string(),
+        url: z.string().url(),
         title: z.string(),
-        description: z.string(),
-        candidate_profile: z.string(),
+        company: z.string().optional(),
+        location: z.string().optional(),
+        remote: z.boolean().optional(),
+        description: z.string().optional(),
+        posted_at: z.string().optional(),
       },
     },
-    async ({ title, description, candidate_profile }) => {
-      const job = description.toLowerCase();
-      const candidate = candidate_profile.toLowerCase();
-
-      const keywords = [
-        "penetration testing",
-        "ethical hacking",
-        "red team",
-        "soc",
-        "siem",
-        "network security",
-        "cybersecurity",
-        "python",
-        "linux",
-        "kali linux",
-        "burp suite",
-        "nmap",
-        "wireshark",
-      ];
-
-      const requirements = keywords.filter((x) => job.includes(x));
-
-      const matched = requirements.filter((x) =>
-        candidate.includes(x),
-      );
-
-      const score =
-        requirements.length === 0
-          ? 0
-          : Math.round((matched.length / requirements.length) * 100);
+    async (job) => {
+      await saveOpportunity(env.DB, {
+        ...job,
+        url: normalizeUrl(job.url),
+      });
 
       return {
         content: [
@@ -248,12 +578,8 @@ function createServer() {
             type: "text",
             text: JSON.stringify(
               {
-                title,
-                score,
-                matched,
-                requirements,
-                note:
-                  "Score reflects keyword evidence only and is not an employment prediction or guarantee.",
+                status: "saved",
+                url: normalizeUrl(job.url),
               },
               null,
               2,
@@ -264,23 +590,147 @@ function createServer() {
     },
   );
 
-  // --------------------------------------------------
-  // 5. DRAFT OUTREACH
-  // --------------------------------------------------
+  server.registerTool(
+    "track_application",
+    {
+      description:
+        "Create or update application tracking. This never submits an application externally.",
+      inputSchema: {
+        opportunity_id: z.number().int(),
+        status: z.enum([
+          "PLANNED",
+          "READY_FOR_REVIEW",
+          "APPLIED",
+          "REJECTED",
+          "INTERVIEW",
+          "OFFER",
+          "CLOSED",
+        ]),
+        cv_shared: z.boolean().optional(),
+        notes: z.string().optional(),
+      },
+    },
+    async ({
+      opportunity_id,
+      status,
+      cv_shared = false,
+      notes,
+    }) => {
+      const timestamp = now();
+
+      await env.DB
+        .prepare(
+          `
+          INSERT INTO applications
+          (opportunity_id, status, cv_shared, notes, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(opportunity_id) DO UPDATE SET
+            status = excluded.status,
+            cv_shared = excluded.cv_shared,
+            notes = excluded.notes,
+            updated_at = excluded.updated_at
+          `,
+        )
+        .bind(
+          opportunity_id,
+          status,
+          cv_shared ? 1 : 0,
+          notes ?? null,
+          timestamp,
+          timestamp,
+        )
+        .run();
+
+      await env.DB
+        .prepare(
+          `
+          UPDATE opportunities
+          SET status = ?, updated_at = ?
+          WHERE id = ?
+          `,
+        )
+        .bind(status, timestamp, opportunity_id)
+        .run();
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              status: "tracked",
+              opportunity_id,
+              application_status: status,
+            }),
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
+    "create_followup",
+    {
+      description:
+        "Schedule a human-reviewed follow-up. It does not send messages automatically.",
+      inputSchema: {
+        opportunity_id: z.number().int().optional(),
+        contact_id: z.number().int().optional(),
+        due_at: z.string(),
+        message: z.string(),
+      },
+    },
+    async ({
+      opportunity_id,
+      contact_id,
+      due_at,
+      message,
+    }) => {
+      const timestamp = now();
+
+      await env.DB
+        .prepare(
+          `
+          INSERT INTO followups
+          (opportunity_id, contact_id, due_at, status, message, created_at, updated_at)
+          VALUES (?, ?, ?, 'PENDING', ?, ?, ?)
+          `,
+        )
+        .bind(
+          opportunity_id ?? null,
+          contact_id ?? null,
+          due_at,
+          message,
+          timestamp,
+          timestamp,
+        )
+        .run();
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              status: "scheduled",
+              due_at,
+              action: "human_review_required",
+            }),
+          },
+        ],
+      };
+    },
+  );
 
   server.registerTool(
     "draft_outreach",
     {
       description:
-        "Draft a concise personalized professional outreach message. Never invent experience or achievements.",
+        "Draft personalized outreach using supplied facts. It never sends the message.",
       inputSchema: {
         person_name: z.string(),
         company: z.string(),
         role: z.string(),
         why_relevant: z.string(),
-        request: z
-          .string()
-          .optional(),
+        request: z.string().optional(),
       },
     },
     async ({
@@ -308,97 +758,43 @@ function createServer() {
     },
   );
 
-  // --------------------------------------------------
-  // 6. CV SHARING DECISION
-  // --------------------------------------------------
-
   server.registerTool(
-    "decide_cv_sharing",
+    "get_followups",
     {
-      description:
-        "Assess whether sharing a CV is contextually appropriate based on the supplied situation.",
+      description: "Return pending follow-ups due before the supplied date.",
       inputSchema: {
-        context: z.string(),
+        before: z.string(),
       },
     },
-    async ({ context }) => {
-      const text = context.toLowerCase();
-
-      const explicitRequest =
-        text.includes("send your cv") ||
-        text.includes("send me your cv") ||
-        text.includes("attach your cv") ||
-        text.includes("resume");
+    async ({ before }) => {
+      const result = await env.DB
+        .prepare(
+          `
+          SELECT *
+          FROM followups
+          WHERE status = 'PENDING'
+            AND due_at <= ?
+          ORDER BY due_at ASC
+          `,
+        )
+        .bind(before)
+        .all();
 
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                explicit_cv_request: explicitRequest,
-                recommendation:
-                  explicitRequest
-                    ? "CV sharing is contextually appropriate."
-                    : "Do not automatically attach the CV; establish relevance or wait for a clear request.",
-                principle:
-                  "Avoid unsolicited document dumping and avoid claiming experience not present in the CV.",
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify(result.results, null, 2),
           },
         ],
       };
     },
   );
-
-  // --------------------------------------------------
-  // 7. FOLLOW-UP
-  // --------------------------------------------------
-
-  server.registerTool(
-    "draft_follow_up",
-    {
-      description:
-        "Create a concise professional follow-up message.",
-      inputSchema: {
-        person_name: z.string(),
-        company: z.string(),
-        original_context: z.string(),
-      },
-    },
-    async ({
-      person_name,
-      company,
-      original_context,
-    }) => {
-      const message =
-        `Hi ${person_name},\n\n` +
-        `Just following up on my previous message regarding opportunities at ${company}. ` +
-        `${original_context}\n\n` +
-        `Thanks for your time,\nMohamed`;
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: message,
-          },
-        ],
-      };
-    },
-  );
-
-  // --------------------------------------------------
-  // 8. WORKFLOW
-  // --------------------------------------------------
 
   server.registerTool(
     "get_workflow",
     {
-      description:
-        "Return the intended ethical cybersecurity job acquisition workflow.",
+      description: "Return the complete automation workflow and safeguards.",
       inputSchema: {},
     },
     async () => ({
@@ -408,26 +804,31 @@ function createServer() {
           text: JSON.stringify(
             {
               workflow: [
-                "Discover legitimate remote cybersecurity opportunities",
-                "Analyze job description",
-                "Match requirements against verified candidate evidence",
-                "Research company using public information",
-                "Identify relevant public professional contact when appropriate",
-                "Draft personalized outreach",
-                "Decide whether CV sharing is appropriate",
-                "Track application",
-                "Prepare respectful follow-up",
+                "AUTO DISCOVER",
+                "VERIFY",
+                "DEDUPLICATE",
+                "ANALYZE",
+                "MATCH",
+                "PRIORITIZE",
+                "RESEARCH",
+                "DRAFT OUTREACH",
+                "CV DECISION",
+                "HUMAN REVIEW",
+                "TRACK",
+                "FOLLOW-UP",
               ],
-              prohibited:
-                [
-                  "Bulk LinkedIn messaging",
-                  "Automated connection spam",
-                  "Logged-in LinkedIn scraping",
-                  "CAPTCHA bypass",
-                  "Cookie/session theft",
-                  "Rate-limit evasion",
-                  "Fabricated experience or certifications",
-                ],
+              safeguards: [
+                "No logged-in LinkedIn scraping",
+                "No automated LinkedIn messaging",
+                "No connection spam",
+                "No CAPTCHA bypass",
+                "No session or cookie theft",
+                "No rate-limit evasion",
+                "No fabricated experience",
+                "No fabricated certifications",
+                "No automatic external application submission",
+                "Outreach requires human review",
+              ],
             },
             null,
             2,
@@ -441,7 +842,15 @@ function createServer() {
 }
 
 export default {
-  fetch(request: Request, env: unknown, ctx: ExecutionContext) {
-    return createMcpHandler(createServer)(request, env, ctx);
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return createMcpHandler(createServer(env))(request, env, ctx);
+  },
+
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    _ctx: ExecutionContext,
+  ) {
+    await runDiscoveryCycle(env.DB);
   },
 };
