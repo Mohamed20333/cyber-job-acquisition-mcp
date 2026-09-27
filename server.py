@@ -62,4 +62,9 @@ def generate_follow_up(person_name:str, company:str, original_context:str):
 def get_workflow():
     return {'steps':['Discover legitimate remote cybersecurity roles from permitted/public sources.','Score textual fit against the real CV/skills.','Research company and public professional contacts where available.','Draft truthful role-specific outreach.','Decide whether CV sharing is appropriate.','Save and track the opportunity.','Human reviews and performs final external action.','Track replies and follow-ups.'],'not_automated':['Bulk LinkedIn connection requests','Bulk LinkedIn DMs','Credential collection','CAPTCHA solving','Cookie/session theft','Scraping behind login','Rate-limit evasion']}
 
-if __name__=='__main__': mcp.run(transport='streamable-http')
+if __name__ == "__main__":
+    mcp.run(
+        transport="streamable-http",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8000")),
+    )
