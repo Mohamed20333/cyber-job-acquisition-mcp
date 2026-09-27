@@ -6,20 +6,26 @@ const normalize = (value: string) =>
 
 export function matchJob(job: JobOpportunity) {
   const jobText = normalize(`${job.role} ${job.location ?? ""} ${job.notes ?? ""}`);
-  const candidateText = normalize(
-    [CANDIDATE_PROFILE.education, ...CANDIDATE_PROFILE.skills, ...CANDIDATE_PROFILE.tools].join(" "),
-  );
-
   const evidence = [...new Set([
     ...CANDIDATE_PROFILE.skills,
     ...CANDIDATE_PROFILE.tools,
   ])];
 
-  const matchedSkills = evidence.filter((skill) =>
+  const detectedRequirements = evidence.filter((skill) =>
     jobText.includes(normalize(skill)),
   );
 
-  const missingSignals = [
+  const matchedSkills = detectedRequirements.filter((skill) =>
+    normalize(
+      [CANDIDATE_PROFILE.education, ...CANDIDATE_PROFILE.skills, ...CANDIDATE_PROFILE.tools].join(" "),
+    ).includes(normalize(skill)),
+  );
+
+  const roleMatch = CANDIDATE_PROFILE.targetRoles.some((role) =>
+    jobText.includes(normalize(role)),
+  );
+
+  const seniorityWarnings = [
     "senior",
     "lead",
     "principal",
@@ -27,24 +33,20 @@ export function matchJob(job: JobOpportunity) {
     "director",
   ].filter((signal) => jobText.includes(signal));
 
-  const requirements = Math.max(
-    1,
-    evidence.filter((skill) => jobText.includes(normalize(skill))).length,
-  );
+  const skillScore = detectedRequirements.length
+    ? Math.round((matchedSkills.length / detectedRequirements.length) * 100)
+    : 0;
 
-  const score = Math.min(
+  const fitScore = Math.min(
     100,
-    Math.round((matchedSkills.length / requirements) * 100),
+    Math.max(0, skillScore + (roleMatch ? 15 : 0) - (seniorityWarnings.length ? 25 : 0)),
   );
-
-  const candidateRelevant = CANDIDATE_PROFILE.targetRoles.some((role) =>
-    jobText.includes(normalize(role)),
-  ) || jobText.includes("cybersecurity") || jobText.includes("security");
 
   return {
-    fitScore: candidateRelevant ? score : Math.min(score, 40),
+    fitScore,
     matchedSkills,
-    seniorityWarnings: missingSignals,
-    candidateTextLength: candidateText.length,
+    detectedRequirements,
+    roleMatch,
+    seniorityWarnings,
   };
 }
