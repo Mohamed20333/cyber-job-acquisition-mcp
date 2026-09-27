@@ -1,16 +1,29 @@
 import { createMcpHandler } from "agents/mcp/server";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { APP_VERSION } from "./config";
+import { CANDIDATE_PROFILE } from "./candidate";
+import { discoverJobs } from "./jobs";
+import { matchJob } from "./matching";
+import { researchCompany, researchPerson } from "./research";
+import {
+  listOpportunities,
+  saveOpportunity,
+  updateOpportunity,
+  type D1DatabaseLike,
+} from "./tracker";
+import type { JobStatus } from "./types";
 
-function createServer() {
+type Env = {
+  DB?: D1DatabaseLike;
+  BRAVE_SEARCH_API_KEY?: string;
+};
+
+function createServer(env: Env) {
   const server = new McpServer({
     name: "Cyber Job Acquisition Engine",
-    version: "1.0.0",
+    version: APP_VERSION,
   });
-
-  // --------------------------------------------------
-  // 1. HEALTH
-  // --------------------------------------------------
 
   server.registerTool(
     "health",
@@ -19,29 +32,100 @@ function createServer() {
       inputSchema: {},
     },
     async () => ({
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            status: "ok",
-            service: "cyber-job-acquisition-engine",
-            version: "1.0.0",
-            timestamp: new Date().toISOString(),
-          }),
-        },
-      ],
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: "ok",
+          service: "cyber-job-acquisition-engine",
+          version: APP_VERSION,
+          persistence: env.DB ? "d1" : "memory-fallback",
+          timestamp: new Date().toISOString(),
+        }),
+      }],
     }),
   );
 
-  // --------------------------------------------------
-  // 2. ANALYZE JOB
-  // --------------------------------------------------
+  server.registerTool(
+    "get_candidate_profile",
+    {
+      description: "Return the verified candidate profile used for job matching. Do not infer or add unverified experience.",
+      inputSchema: {},
+    },
+    async () => ({
+      content: [{ type: "text", text: JSON.stringify(CANDIDATE_PROFILE, null, 2) }],
+    }),
+  );
+
+  server.registerTool(
+    "search_jobs",
+    {
+      description: "Discover public cybersecurity job opportunities from supported public job APIs. Does not scrape logged-in sites.",
+      inputSchema: {
+        save: z.boolean().optional(),
+      },
+    },
+    async ({ save = true }) => {
+      const jobs = await discoverJobs();
+      const enriched = jobs.map((job) => {
+        const match = matchJob(job);
+        return { ...job, fitScore: match.fitScore, matchedSkills: match.matchedSkills };
+      });
+
+      if (save) {
+        for (const job of enriched) await saveOpportunity(env.DB, job);
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            count: enriched.length,
+            saved: save,
+            jobs: enriched.slice(0, 50),
+          }, null, 2),
+        }],
+      };
+    },
+  );
+
+  server.registerTool(
+    "run_discovery_cycle",
+    {
+      description: "Run discovery, evidence-based matching, and persistence as one cycle.",
+      inputSchema: {},
+    },
+    async () => {
+      const jobs = await discoverJobs();
+      const processed = [];
+      for (const job of jobs) {
+        const match = matchJob(job);
+        const enriched = {
+          ...job,
+          fitScore: match.fitScore,
+          matchedSkills: match.matchedSkills,
+        };
+        await saveOpportunity(env.DB, enriched);
+        processed.push(enriched);
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            cycle: "completed",
+            discovered: jobs.length,
+            persisted: processed.length,
+            generatedAt: new Date().toISOString(),
+          }, null, 2),
+        }],
+      };
+    },
+  );
 
   server.registerTool(
     "analyze_job",
     {
-      description:
-        "Analyze a cybersecurity job description and extract role, skills, requirements, seniority, location, remote status, and possible fit signals.",
+      description: "Analyze a supplied job description and extract evidence-based role, skill, seniority, and remote signals.",
       inputSchema: {
         title: z.string(),
         description: z.string(),
@@ -49,391 +133,285 @@ function createServer() {
     },
     async ({ title, description }) => {
       const text = description.toLowerCase();
-
       const skills = [
-        "penetration testing",
-        "ethical hacking",
-        "burp suite",
-        "kali linux",
-        "nmap",
-        "metasploit",
-        "web application security",
-        "red team",
-        "soc",
-        "siem",
-        "splunk",
-        "sentinel",
-        "incident response",
-        "network security",
-        "python",
-        "linux",
-        "active directory",
-        "cloud security",
-        "aws",
-        "azure",
-        "gcp",
-        "wireshark",
-        "tcp/ip",
-        "nist",
-        "iso 27001",
+        "penetration testing", "ethical hacking", "burp suite", "kali linux",
+        "nmap", "metasploit", "web application security", "red team", "soc",
+        "siem", "splunk", "sentinel", "incident response", "network security",
+        "python", "linux", "active directory", "cloud security", "aws", "azure",
+        "gcp", "wireshark", "tcp/ip", "nist", "iso 27001",
       ];
-
-      const detectedSkills = skills.filter((skill) =>
-        text.includes(skill),
-      );
-
       const juniorSignals = [
-        "junior",
-        "entry level",
-        "entry-level",
-        "intern",
-        "internship",
-        "trainee",
-        "graduate",
-        "student",
+        "junior", "entry level", "entry-level", "intern", "internship",
+        "trainee", "graduate", "student",
       ];
-
-      const senioritySignals = juniorSignals.filter((signal) =>
-        text.includes(signal),
-      );
-
-      const remote =
-        text.includes("remote") ||
-        text.includes("work from home") ||
-        text.includes("distributed");
 
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                title,
-                detected_skills: detectedSkills,
-                junior_or_entry_signals: senioritySignals,
-                remote_signal: remote,
-                analysis_note:
-                  "This is an evidence-based extraction from the supplied job description. It does not invent requirements or candidate experience.",
-              },
-              null,
-              2,
-            ),
-          },
-        ],
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            title,
+            detected_skills: skills.filter((x) => text.includes(x)),
+            junior_or_entry_signals: juniorSignals.filter((x) => text.includes(x)),
+            remote_signal:
+              text.includes("remote") ||
+              text.includes("work from home") ||
+              text.includes("distributed"),
+            note: "Extraction is based only on the supplied text.",
+          }, null, 2),
+        }],
       };
     },
   );
-
-  // --------------------------------------------------
-  // 3. MATCH CANDIDATE
-  // --------------------------------------------------
 
   server.registerTool(
     "match_candidate",
     {
-      description:
-        "Compare a candidate profile against a cybersecurity job description without inventing experience, certifications, or employment history.",
+      description: "Match a stored verified candidate profile against a supplied job description.",
       inputSchema: {
         job_description: z.string(),
-        candidate_profile: z.string(),
       },
     },
-    async ({ job_description, candidate_profile }) => {
-      const job = job_description.toLowerCase();
-      const candidate = candidate_profile.toLowerCase();
-
-      const keywords = [
-        "penetration testing",
-        "ethical hacking",
-        "red team",
-        "soc",
-        "siem",
-        "network security",
-        "cybersecurity",
-        "python",
-        "linux",
-        "kali linux",
-        "burp suite",
-        "nmap",
-        "wireshark",
-        "ctf",
-        "incident response",
-        "active directory",
-        "cloud",
-      ];
-
-      const matches = keywords.filter(
-        (keyword) =>
-          job.includes(keyword) && candidate.includes(keyword),
-      );
-
-      const jobRequirements = keywords.filter((keyword) =>
-        job.includes(keyword),
-      );
-
-      const missing = jobRequirements.filter(
-        (keyword) => !candidate.includes(keyword),
-      );
-
+    async ({ job_description }) => {
+      const job = {
+        id: "manual",
+        dedupeKey: "manual",
+        company: "Unknown",
+        role: "Supplied job",
+        url: "",
+        source: "manual",
+        remote: job_description.toLowerCase().includes("remote"),
+        matchedSkills: [],
+        status: "DISCOVERED" as const,
+        notes: job_description,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                matched_keywords: matches,
-                potentially_missing_keywords: missing,
-                job_keywords_detected: jobRequirements,
-                methodology:
-                  "Keyword overlap only. Human review is required for final qualification decisions.",
-              },
-              null,
-              2,
-            ),
-          },
-        ],
+        content: [{ type: "text", text: JSON.stringify(matchJob(job), null, 2) }],
       };
     },
   );
-
-  // --------------------------------------------------
-  // 4. SCORE JOB
-  // --------------------------------------------------
 
   server.registerTool(
-    "score_job",
+    "save_opportunity",
     {
-      description:
-        "Produce a transparent job-fit score based only on supplied evidence.",
+      description: "Persist a verified job opportunity in D1 when configured, otherwise use the temporary in-memory fallback.",
       inputSchema: {
-        title: z.string(),
-        description: z.string(),
-        candidate_profile: z.string(),
+        company: z.string(),
+        role: z.string(),
+        url: z.string(),
+        source: z.string(),
+        location: z.string().optional(),
+        remote: z.boolean().optional(),
+        fit_score: z.number().optional(),
+        matched_skills: z.array(z.string()).optional(),
+        notes: z.string().optional(),
       },
     },
-    async ({ title, description, candidate_profile }) => {
-      const job = description.toLowerCase();
-      const candidate = candidate_profile.toLowerCase();
-
-      const keywords = [
-        "penetration testing",
-        "ethical hacking",
-        "red team",
-        "soc",
-        "siem",
-        "network security",
-        "cybersecurity",
-        "python",
-        "linux",
-        "kali linux",
-        "burp suite",
-        "nmap",
-        "wireshark",
-      ];
-
-      const requirements = keywords.filter((x) => job.includes(x));
-
-      const matched = requirements.filter((x) =>
-        candidate.includes(x),
-      );
-
-      const score =
-        requirements.length === 0
-          ? 0
-          : Math.round((matched.length / requirements.length) * 100);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                title,
-                score,
-                matched,
-                requirements,
-                note:
-                  "Score reflects keyword evidence only and is not an employment prediction or guarantee.",
-              },
-              null,
-              2,
-            ),
-          },
-        ],
+    async (input) => {
+      const now = new Date().toISOString();
+      const job = {
+        id: input.url.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 120),
+        dedupeKey: input.url.toLowerCase().trim(),
+        company: input.company,
+        role: input.role,
+        url: input.url,
+        location: input.location,
+        source: input.source,
+        remote: input.remote ?? false,
+        fitScore: input.fit_score,
+        matchedSkills: input.matched_skills ?? [],
+        status: "DISCOVERED" as const,
+        notes: input.notes,
+        createdAt: now,
+        updatedAt: now,
       };
+      await saveOpportunity(env.DB, job);
+      return { content: [{ type: "text", text: JSON.stringify(job, null, 2) }] };
     },
   );
 
-  // --------------------------------------------------
-  // 5. DRAFT OUTREACH
-  // --------------------------------------------------
+  server.registerTool(
+    "list_opportunities",
+    {
+      description: "List tracked opportunities, optionally filtered by status.",
+      inputSchema: {
+        status: z.string().optional(),
+      },
+    },
+    async ({ status }) => ({
+      content: [{
+        type: "text",
+        text: JSON.stringify(
+          await listOpportunities(env.DB, status as JobStatus | undefined),
+          null,
+          2,
+        ),
+      }],
+    }),
+  );
+
+  server.registerTool(
+    "update_opportunity",
+    {
+      description: "Update the tracked status and optional notes for an opportunity.",
+      inputSchema: {
+        id: z.string(),
+        status: z.enum([
+          "DISCOVERED", "QUALIFIED", "READY_TO_APPLY", "APPLIED",
+          "CONTACTED", "REPLIED", "INTERVIEW", "REJECTED", "CLOSED", "FOLLOW_UP",
+        ]),
+        notes: z.string().optional(),
+      },
+    },
+    async ({ id, status, notes }) => ({
+      content: [{
+        type: "text",
+        text: JSON.stringify(await updateOpportunity(env.DB, id, status, notes), null, 2),
+      }],
+    }),
+  );
+
+  server.registerTool(
+    "research_company",
+    {
+      description: "Fetch and summarize visible public content from a supplied company URL.",
+      inputSchema: { url: z.string().url() },
+    },
+    async ({ url }) => ({
+      content: [{ type: "text", text: JSON.stringify(await researchCompany(url), null, 2) }],
+    }),
+  );
+
+  server.registerTool(
+    "research_person",
+    {
+      description: "Research a named professional using public search results when a search API key is configured. Never infer hiring authority without evidence.",
+      inputSchema: {
+        name: z.string(),
+        company: z.string(),
+      },
+    },
+    async ({ name, company }) => ({
+      content: [{
+        type: "text",
+        text: JSON.stringify(
+          await researchPerson(name, company, env.BRAVE_SEARCH_API_KEY),
+          null,
+          2,
+        ),
+      }],
+    }),
+  );
 
   server.registerTool(
     "draft_outreach",
     {
-      description:
-        "Draft a concise personalized professional outreach message. Never invent experience or achievements.",
+      description: "Draft concise personalized outreach without inventing experience or credentials.",
       inputSchema: {
         person_name: z.string(),
         company: z.string(),
         role: z.string(),
         why_relevant: z.string(),
-        request: z
-          .string()
-          .optional(),
+        request: z.string().optional(),
       },
     },
-    async ({
-      person_name,
-      company,
-      role,
-      why_relevant,
-      request,
-    }) => {
-      const message =
-        `Hi ${person_name},\n\n` +
-        `I came across your work at ${company} and the ${role} opportunity. ` +
-        `${why_relevant}\n\n` +
-        `${request ?? "I’d appreciate the opportunity to learn more about the role and whether my background could be relevant."}\n\n` +
-        `Best,\nMohamed Mosliem Elsharkawy`;
+    async ({ person_name, company, role, why_relevant, request }) => ({
+      content: [{
+        type: "text",
+        text:
+          `Hi ${person_name},
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: message,
-          },
-        ],
-      };
-    },
+I came across your work at ${company} and the ${role} opportunity. ${why_relevant}
+
+${request ?? "I’d appreciate the opportunity to learn more about the role and whether my background could be relevant."}
+
+Best,
+Mohamed Mosliem Elsharkawy`,
+      }],
+    }),
   );
-
-  // --------------------------------------------------
-  // 6. CV SHARING DECISION
-  // --------------------------------------------------
 
   server.registerTool(
     "decide_cv_sharing",
     {
-      description:
-        "Assess whether sharing a CV is contextually appropriate based on the supplied situation.",
-      inputSchema: {
-        context: z.string(),
-      },
+      description: "Assess whether a CV request is explicit in the supplied context.",
+      inputSchema: { context: z.string() },
     },
     async ({ context }) => {
       const text = context.toLowerCase();
-
-      const explicitRequest =
-        text.includes("send your cv") ||
-        text.includes("send me your cv") ||
-        text.includes("attach your cv") ||
-        text.includes("resume");
-
+      const explicit = ["send your cv", "send me your cv", "attach your cv", "send your resume", "attach your resume"]
+        .some((x) => text.includes(x));
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                explicit_cv_request: explicitRequest,
-                recommendation:
-                  explicitRequest
-                    ? "CV sharing is contextually appropriate."
-                    : "Do not automatically attach the CV; establish relevance or wait for a clear request.",
-                principle:
-                  "Avoid unsolicited document dumping and avoid claiming experience not present in the CV.",
-              },
-              null,
-              2,
-            ),
-          },
-        ],
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            explicit_cv_request: explicit,
+            action: explicit
+              ? "CV sharing is contextually appropriate."
+              : "Do not automatically attach the CV without a clear request or relevant application context.",
+          }, null, 2),
+        }],
       };
     },
   );
 
-  // --------------------------------------------------
-  // 7. FOLLOW-UP
-  // --------------------------------------------------
-
   server.registerTool(
     "draft_follow_up",
     {
-      description:
-        "Create a concise professional follow-up message.",
+      description: "Create a concise professional follow-up message.",
       inputSchema: {
         person_name: z.string(),
         company: z.string(),
         original_context: z.string(),
       },
     },
-    async ({
-      person_name,
-      company,
-      original_context,
-    }) => {
-      const message =
-        `Hi ${person_name},\n\n` +
-        `Just following up on my previous message regarding opportunities at ${company}. ` +
-        `${original_context}\n\n` +
-        `Thanks for your time,\nMohamed`;
+    async ({ person_name, company, original_context }) => ({
+      content: [{
+        type: "text",
+        text:
+          `Hi ${person_name},
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: message,
-          },
-        ],
-      };
-    },
+Just following up on my previous message regarding opportunities at ${company}. ${original_context}
+
+Thanks for your time,
+Mohamed`,
+      }],
+    }),
   );
-
-  // --------------------------------------------------
-  // 8. WORKFLOW
-  // --------------------------------------------------
 
   server.registerTool(
     "get_workflow",
     {
-      description:
-        "Return the intended ethical cybersecurity job acquisition workflow.",
+      description: "Return the complete ethical job-acquisition workflow and automation boundaries.",
       inputSchema: {},
     },
     async () => ({
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            {
-              workflow: [
-                "Discover legitimate remote cybersecurity opportunities",
-                "Analyze job description",
-                "Match requirements against verified candidate evidence",
-                "Research company using public information",
-                "Identify relevant public professional contact when appropriate",
-                "Draft personalized outreach",
-                "Decide whether CV sharing is appropriate",
-                "Track application",
-                "Prepare respectful follow-up",
-              ],
-              prohibited:
-                [
-                  "Bulk LinkedIn messaging",
-                  "Automated connection spam",
-                  "Logged-in LinkedIn scraping",
-                  "CAPTCHA bypass",
-                  "Cookie/session theft",
-                  "Rate-limit evasion",
-                  "Fabricated experience or certifications",
-                ],
-            },
-            null,
-            2,
-          ),
-        },
-      ],
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          workflow: [
+            "Discover public legitimate opportunities",
+            "Analyze job evidence",
+            "Match against verified candidate data",
+            "Persist and deduplicate opportunities",
+            "Research company and public professional information",
+            "Draft personalized outreach",
+            "Decide CV sharing from explicit context",
+            "Track application state",
+            "Prepare follow-ups",
+          ],
+          prohibited: [
+            "Bulk LinkedIn messaging",
+            "Automated connection spam",
+            "Logged-in LinkedIn scraping",
+            "CAPTCHA bypass",
+            "Cookie or session theft",
+            "Rate-limit evasion",
+            "Fabricated experience or certifications",
+          ],
+        }, null, 2),
+      }],
     }),
   );
 
@@ -442,6 +420,6 @@ function createServer() {
 
 export default {
   fetch(request: Request, env: unknown, ctx: ExecutionContext) {
-    return createMcpHandler(createServer)(request, env, ctx);
+    return createMcpHandler((reqEnv) => createServer(reqEnv as Env))(request, env, ctx);
   },
 };
