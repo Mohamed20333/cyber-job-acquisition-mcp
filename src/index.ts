@@ -14,12 +14,7 @@ import {
 } from "./tracker";
 import type { JobStatus } from "./types";
 
-type Env = {
-  DB?: D1DatabaseLike;
-  BRAVE_SEARCH_API_KEY?: string;
-};
-
-function createServer(env: Env) {
+function createServer() {
   const server = new McpServer({
     name: "Cyber Job Acquisition Engine",
     version: APP_VERSION,
@@ -38,7 +33,7 @@ function createServer(env: Env) {
           status: "ok",
           service: "cyber-job-acquisition-engine",
           version: APP_VERSION,
-          persistence: env.DB ? "d1" : "memory-fallback",
+          persistence: "memory-fallback",
           timestamp: new Date().toISOString(),
         }),
       }],
@@ -72,7 +67,7 @@ function createServer(env: Env) {
       });
 
       if (save) {
-        for (const job of enriched) await saveOpportunity(env.DB, job);
+        for (const job of enriched) await saveOpportunity(undefined, job);
       }
 
       return {
@@ -104,7 +99,7 @@ function createServer(env: Env) {
           fitScore: match.fitScore,
           matchedSkills: match.matchedSkills,
         };
-        await saveOpportunity(env.DB, enriched);
+        await saveOpportunity(undefined, enriched);
         processed.push(enriched);
       }
 
@@ -226,7 +221,7 @@ function createServer(env: Env) {
         createdAt: now,
         updatedAt: now,
       };
-      await saveOpportunity(env.DB, job);
+      await saveOpportunity(undefined, job);
       return { content: [{ type: "text", text: JSON.stringify(job, null, 2) }] };
     },
   );
@@ -243,7 +238,7 @@ function createServer(env: Env) {
       content: [{
         type: "text",
         text: JSON.stringify(
-          await listOpportunities(env.DB, status as JobStatus | undefined),
+          await listOpportunities(undefined, status as JobStatus | undefined),
           null,
           2,
         ),
@@ -267,7 +262,7 @@ function createServer(env: Env) {
     async ({ id, status, notes }) => ({
       content: [{
         type: "text",
-        text: JSON.stringify(await updateOpportunity(env.DB, id, status, notes), null, 2),
+        text: JSON.stringify(await updateOpportunity(undefined, id, status, notes), null, 2),
       }],
     }),
   );
@@ -296,7 +291,7 @@ function createServer(env: Env) {
       content: [{
         type: "text",
         text: JSON.stringify(
-          await researchPerson(name, company, env.BRAVE_SEARCH_API_KEY),
+          await researchPerson(name, company),
           null,
           2,
         ),
@@ -420,6 +415,6 @@ Mohamed`,
 
 export default {
   fetch(request: Request, env: unknown, ctx: ExecutionContext) {
-    return createMcpHandler((reqEnv) => createServer(reqEnv as Env))(request, env, ctx);
+    return createMcpHandler(createServer)(request, env, ctx);
   },
 };
