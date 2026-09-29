@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { createMcpAgent } from "@cloudflare/playwright-mcp";
+import { launch } from "@cloudflare/playwright";
 
 type Env = {
   BROWSER: Fetcher;
@@ -9,8 +10,38 @@ type Env = {
 export const PlaywrightMCP = createMcpAgent(env.BROWSER);
 
 export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const { pathname } = new URL(request.url);
+
+    if (pathname === "/browser-test") {
+      try {
+        const browser = await launch(env.BROWSER);
+        const page = await browser.newPage();
+        await page.goto("https://demo.playwright.dev/todomvc", {
+          waitUntil: "domcontentloaded",
+          timeout: 30000,
+        });
+        const title = await page.title();
+        const url = page.url();
+        await browser.close();
+
+        return Response.json({
+          ok: true,
+          browser: "cloudflare-browser-run",
+          title,
+          url,
+        });
+      } catch (error) {
+        return Response.json(
+          {
+            ok: false,
+            browser: "cloudflare-browser-run",
+            error: error instanceof Error ? error.message : String(error),
+          },
+          { status: 502 },
+        );
+      }
+    }
 
     switch (pathname) {
       case "/sse":
