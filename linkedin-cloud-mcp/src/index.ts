@@ -2,7 +2,14 @@ import { env } from "cloudflare:workers";
 
 import { createMcpAgent } from "@cloudflare/playwright-mcp";
 
-export const PlaywrightMCP = createMcpAgent(env.BROWSER);
+interface Env {
+  BROWSER: Fetcher;
+  MCP_OBJECT: DurableObjectNamespace;
+}
+
+const browserEnv = env as unknown as Env;
+
+export const PlaywrightMCP = createMcpAgent(browserEnv.BROWSER);
 
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
