@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { createMcpAgent } from "@cloudflare/playwright-mcp";
 
-export const PlaywrightMCP = createMcpAgent(env.BROWSER, {
+interface Env {\n  BROWSER: Fetcher;\n  MCP_OBJECT: DurableObjectNamespace;\n}\n\nexport const PlaywrightMCP = createMcpAgent(env.BROWSER, {
   imageResponses: "allow",
 });
 
