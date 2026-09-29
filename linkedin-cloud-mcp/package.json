@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc --noEmit",
     "deploy": "wrangler deploy"
@@ -14,6 +16,7 @@
   "devDependencies": {
     "@types/node": "^22.14.1",
     "typescript": "^5.9.0",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.0.0",
+    "@cloudflare/workers-types": "^4.20260928.0"
   }
 }
