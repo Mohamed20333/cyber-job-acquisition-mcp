@@ -101,6 +101,56 @@ function needsConfirmation(confirmed?: boolean) {
   return !(confirmed === true || AUTO_CONFIRM);
 }
 
+
+async function performAddProject(
+  page: Page,
+  name: string,
+  description: string,
+  url?: string
+): Promise<void> {
+  await profilePage(page);
+  await clickOne(page, ["Add profile section", "Add section"]);
+  try { await clickOne(page, ["Additional", "Accomplishments"]); } catch {}
+  await clickOne(page, ["Add projects", "Projects"]);
+  await fillField(page, ["Project name", "Name", "Project"], name);
+  const fields = await visibleFields(page);
+  if (fields.length >= 2) await fields[1].fill(description);
+  if (url) {
+    try { await fillField(page, ["Project URL", "URL", "Website"], url); } catch {}
+  }
+  await clickOne(page, ["Save"]);
+}
+
+async function githubProjectData(repository: string, customDescription?: string) {
+  const normalized = repository
+    .replace(/^https?:\/\/(www\.)?github\.com\//, "")
+    .replace(/\.git$/, "")
+    .replace(/\/$/, "");
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(normalized)) {
+    throw new Error("Invalid GitHub repository. Use owner/repository or a public GitHub URL.");
+  }
+  const repoResponse = await fetch("https://api.github.com/repos/" + normalized, {
+    headers: { "Accept": "application/vnd.github+json", "User-Agent": "linkedin-profile-agent" }
+  });
+  if (!repoResponse.ok) throw new Error("GitHub repository lookup failed: HTTP " + repoResponse.status);
+  const repo = await repoResponse.json() as {
+    full_name: string; name: string; html_url: string;
+    description: string | null; homepage: string | null;
+  };
+  const readmeResponse = await fetch("https://api.github.com/repos/" + normalized + "/readme", {
+    headers: { "Accept": "application/vnd.github.raw+json", "User-Agent": "linkedin-profile-agent" }
+  });
+  let readme = "";
+  if (readmeResponse.ok) readme = (await readmeResponse.text()).slice(0, 6000);
+  const base = customDescription?.trim() || repo.description?.trim() ||
+    "Cybersecurity project developed and documented on GitHub.";
+  const readmeSignal = readme.replace(/[#*_>\[\]()]/g, " ").replace(/\s+/g, " ").trim();
+  const generated = readmeSignal && !customDescription
+    ? (base + " " + readmeSignal.slice(0, 700)).slice(0, 2000)
+    : base.slice(0, 2000);
+  return { name: repo.name, description: generated, url: repo.html_url, homepage: repo.homepage, repository: repo.full_name };
+}
+
 function createServer() {
   const server = new McpServer({ name: "linkedin-profile-agent", version: VERSION });
 
@@ -149,20 +199,32 @@ function createServer() {
     }
     try {
       const { page } = await browser();
-      await profilePage(page);
-      await clickOne(page, ["Add profile section", "Add section"]);
-      try { await clickOne(page, ["Additional", "Accomplishments"]); } catch {}
-      await clickOne(page, ["Add projects", "Projects"]);
-      await fillField(page, ["Project name", "Name", "Project"], name);
-
-      const fields = await visibleFields(page);
-      if (fields.length >= 2) await fields[1].fill(description);
-
-      if (url) {
-        try { await fillField(page, ["Project URL", "URL", "Website"], url); } catch {}
-      }
-      await clickOne(page, ["Save"]);
+      await performAddProject(page, name, description, url);
       return result({ status: "COMPLETED", action: "linkedin_add_project", name, url });
+    } catch (e) { return failure(e); }
+  });
+
+  server.registerTool("linkedin_add_github_project", {
+    description: "Fetch a public GitHub repository, prepare a concise LinkedIn project description from its public metadata/README, and add it to the user's LinkedIn profile. Write requires confirmed=true unless LINKEDIN_AUTO_CONFIRM=true.",
+    inputSchema: z.object({
+      repository: z.string().min(1),
+      description: z.string().optional(),
+      confirmed: z.boolean().optional()
+    })
+  }, async ({ repository, description, confirmed }) => {
+    try {
+      const project = await githubProjectData(repository, description);
+      if (needsConfirmation(confirmed)) {
+        return result({
+          status: "CONFIRMATION_REQUIRED",
+          action: "linkedin_add_github_project",
+          proposed: project,
+          instruction: "Call again with confirmed=true to perform the LinkedIn write."
+        });
+      }
+      const { page } = await browser();
+      await performAddProject(page, project.name, project.description, project.url);
+      return result({ status: "COMPLETED", action: "linkedin_add_github_project", project });
     } catch (e) { return failure(e); }
   });
 
