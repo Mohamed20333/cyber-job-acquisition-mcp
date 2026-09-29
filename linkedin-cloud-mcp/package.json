@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc --noEmit",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy --config wrangler.toml"
   },
   "dependencies": {
     "@cloudflare/playwright-mcp": "0.0.5"
