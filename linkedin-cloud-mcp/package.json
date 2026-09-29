@@ -1,6 +1,6 @@
 {
   "name": "linkedin-cloud-mcp",
-  "version": "1.0.7",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,7 +11,7 @@
     "deploy": "wrangler deploy --config wrangler.toml"
   },
   "dependencies": {
-    "@cloudflare/playwright-mcp": "0.0.5"
+    "@cloudflare/playwright-mcp": "^1.1.1"
   },
   "devDependencies": {
     "@types/node": "22.14.1",
