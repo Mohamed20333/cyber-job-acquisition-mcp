@@ -1,6 +1,6 @@
 {
   "name": "linkedin-cloud-mcp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,12 +11,12 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "@cloudflare/playwright-mcp": "1.1.1"
+    "@cloudflare/playwright-mcp": "0.0.5"
   },
   "devDependencies": {
     "@types/node": "^22.14.1",
     "typescript": "^5.9.0",
-    "wrangler": "^4.0.0",
-    "@cloudflare/workers-types": "5.20260929.1"
+    "wrangler": "^4.26.0",
+    "@cloudflare/workers-types": "4.20250924.0"
   }
 }
