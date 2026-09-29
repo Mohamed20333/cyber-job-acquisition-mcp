@@ -1,11 +1,13 @@
-import { env } from "cloudflare:workers";
 import { createMcpAgent } from "@cloudflare/playwright-mcp";
 
-export const PlaywrightMCP = createMcpAgent(env.BROWSER);
+interface Env {
+  BROWSER: Fetcher;
+}
 
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const { pathname } = new URL(request.url);
+    const PlaywrightMCP = createMcpAgent(env.BROWSER);
 
     switch (pathname) {
       case "/sse":
