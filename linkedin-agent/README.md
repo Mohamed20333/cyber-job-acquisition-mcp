@@ -126,3 +126,13 @@ Ask Claude:
 ## Maintenance
 
 LinkedIn can change its UI. If selectors stop working, update src/index.ts and run npm run build.
+
+## GitHub-to-LinkedIn shortcut
+
+The MCP includes a dedicated tool named `linkedin_add_github_project`. Claude can pass a public repository such as `Mohamed20333/PhishGuard-ML`; the server fetches public repository metadata and README text, prepares the project content, then writes it to LinkedIn through the local browser session.
+
+Example:
+
+> Add Mohamed20333/PhishGuard-ML to my LinkedIn Projects.
+
+The default confirmation mode makes Claude first show the proposed project data. A second call with `confirmed=true` performs the browser write.
