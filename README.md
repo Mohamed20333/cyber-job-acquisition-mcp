@@ -54,3 +54,9 @@ Create a D1 database:
 
 ```bash
 npx wrangler d1 create cyber-job-acquisition-db
+
+## ChatGPT LinkedIn browser agent
+
+A remote ChatGPT-ready Playwright/Browser Run implementation is in `linkedin-cloud-mcp/`. It does not require Claude Desktop. Deploy it to Cloudflare Workers, then connect its `/mcp` endpoint to ChatGPT as a custom MCP server. The first login is manual; after that, the browser agent can navigate and edit the authenticated LinkedIn profile.
+
+See `linkedin-cloud-mcp/README.md` for deployment and first-login steps.
