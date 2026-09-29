@@ -1,9 +1,8 @@
 import { env } from "cloudflare:workers";
+
 import { createMcpAgent } from "@cloudflare/playwright-mcp";
 
-const PlaywrightMCPBase = createMcpAgent(env.BROWSER);
-
-export class PlaywrightMCP extends PlaywrightMCPBase {}
+export const PlaywrightMCP = createMcpAgent(env.BROWSER);
 
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
