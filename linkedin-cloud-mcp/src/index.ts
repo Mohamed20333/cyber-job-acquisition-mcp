@@ -1,9 +1,8 @@
 import { env } from "cloudflare:workers";
 import { createMcpAgent } from "@cloudflare/playwright-mcp";
-import { launch } from "@cloudflare/playwright";
 
 type Env = {
-  BROWSER: Fetcher;
+  BROWSER: any;
   MCP_OBJECT: DurableObjectNamespace;
 };
 
@@ -13,24 +12,31 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const { pathname } = new URL(request.url);
 
+    // Direct Browser Run health check. This intentionally bypasses MCP so we
+    // can verify the Cloudflare browser binding independently of Playwright MCP.
     if (pathname === "/browser-test") {
       try {
-        const browser = await launch(env.BROWSER);
-        const page = await browser.newPage();
-        await page.goto("https://demo.playwright.dev/todomvc", {
-          waitUntil: "domcontentloaded",
-          timeout: 30000,
+        const response = await env.BROWSER.quickAction("content", {
+          url: "https://demo.playwright.dev/todomvc",
+          gotoOptions: {
+            waitUntil: "domcontentloaded",
+            timeout: 30000,
+          },
         });
-        const title = await page.title();
-        const url = page.url();
-        await browser.close();
 
-        return Response.json({
-          ok: true,
-          browser: "cloudflare-browser-run",
-          title,
-          url,
-        });
+        return new Response(
+          JSON.stringify({
+            ok: response.ok,
+            browser: "cloudflare-browser-run",
+            status: response.status,
+            contentType: response.headers.get("content-type"),
+            bodyPreview: (await response.text()).slice(0, 500),
+          }),
+          {
+            status: response.ok ? 200 : 502,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          },
+        );
       } catch (error) {
         return Response.json(
           {
