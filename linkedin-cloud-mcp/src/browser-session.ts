@@ -4,7 +4,8 @@ type State={sessionId?:string;lastError?:string;lastErrorAt?:number;nextAcquireA
 type Action={action:"status"}|{action:"linkedin_check"}|{action:"open";url:string}|{action:"snapshot"}|{action:"click";selector:string}|{action:"type";selector:string;text:string}|{action:"back"}|{action:"live_view"};
 const LINKEDIN=/^https:\/\/([a-z0-9-]+\.)*linkedin\.com(?:\/|$)/i;
 export class BrowserSessionDO extends DurableObject<Env>{
- private state:State={acquisitions:0};\n private busy:Promise<void>=Promise.resolve();
+ private state:State={acquisitions:0};
+ private busy:Promise<void>=Promise.resolve();
  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{const s=await ctx.storage.get<State>("state");if(s)this.state=s;});}
  private async save(){await this.ctx.storage.put("state",this.state);}
  private classify(e:unknown){const m=e instanceof Error?e.message:String(e);if(/time limit exceeded for today|daily.*limit|10 minutes.*day/i.test(m))return"BROWSER_DAILY_LIMIT_REACHED";if(/429|rate limit|too many requests/i.test(m))return"BROWSER_RATE_LIMITED";if(/session.*(closed|expired|not found)|invalid.*session/i.test(m))return"BROWSER_SESSION_EXPIRED";if(/timeout|timed out|connectovercdp|connection/i.test(m))return"BROWSER_TIMEOUT";return"BROWSER_ERROR";}
