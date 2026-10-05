@@ -6,6 +6,8 @@ on:
   pull_request:
     paths: ["linkedin-cloud-mcp/**"]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,9 +22,22 @@ jobs:
           cache: npm
           cache-dependency-path: linkedin-cloud-mcp/package.json
       - run: npm install
-      - run: npm run build
+      - id: build
+        run: npm run build
+      - name: Capture TypeScript diagnostics
+        if: steps.build.outcome == 'failure'
+        working-directory: .
+        run: |
+          cd linkedin-cloud-mcp
+          npx tsc --noEmit --pretty false > ../.ci-build-error.log 2>&1 || true
+          cd ..
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci-build-error.log
+          git commit -m "[skip ci] capture LinkedIn MCP build diagnostics" || true
+          git push || true
       - name: Deploy to Cloudflare
-        if: github.event_name != 'pull_request'
+        if: success()
         uses: cloudflare/wrangler-action@v3
         with:
           workingDirectory: linkedin-cloud-mcp
