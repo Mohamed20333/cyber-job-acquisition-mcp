@@ -14,7 +14,61 @@ export class BrowserSessionDO extends DurableObject<Env>{
  private async page(b:any){const c=b.contexts()[0]??await b.newContext();return c.pages()[0]??await c.newPage();}
  private async snap(b:any){const p=await this.page(b);const text=await p.locator("body").innerText({timeout:10000}).catch(()=> "");return{url:p.url(),title:await p.title().catch(()=>""),text:text.slice(0,20000)};}
  private async check(b:any){const p=await this.page(b);await p.goto("https://www.linkedin.com/",{waitUntil:"domcontentloaded",timeout:45000});const url=p.url();const body=(await p.locator("body").innerText({timeout:10000}).catch(()=> "")).slice(0,20000).toLowerCase();if(/captcha|challenge|verification|verify you|security check/.test(body))return{status:"HUMAN_INTERVENTION_REQUIRED",url};if(/\/login(?:[/?#]|$)/i.test(url)||/sign in to linkedin|email or phone|password/.test(body))return{status:"LOGIN_REQUIRED",url};return{status:"LOGGED_IN",url,title:await p.title()};}
- private async action(a:Action){switch(a.action){case"status":return{ok:true,session:this.state.sessionId?"configured":"inactive",sessionIdPresent:Boolean(this.state.sessionId),lastError:this.state.lastError??null,lastErrorAt:this.state.lastErrorAt??null,nextAcquireAt:this.state.nextAcquireAt??null,acquisitions:this.state.acquisitions};case"linkedin_check":return this.withBrowser(b=>this.check(b));case"open":if(!LINKEDIN.test(a.url))throw new Error("URL_NOT_ALLOWED: LinkedIn only");return this.withBrowser(async b=>{const p=await this.page(b);await p.goto(a.url,{waitUntil:"domcontentloaded",timeout:45000});return{url:p.url(),title:await p.title()};});case"snapshot":return this.withBrowser(b=>this.snap(b));case"click":return this.withBrowser(async b=>{const p=await this.page(b);await p.locator(a.selector).first().click({timeout:15000});return{ok:true,url:p.url(),title:await p.title()};});case"type":return this.withBrowser(async b=>{const p=await this.page(b);await p.locator(a.selector).first().fill(a.text,{timeout:15000});return{ok:true};});case"back":return this.withBrowser(async b=>{const p=await this.page(b);await p.goBack({waitUntil:"domcontentloaded",timeout:30000});return{ok:true,url:p.url(),title:await p.title()};});case"live_view":return this.withBrowser(async b=>{const p=await this.page(b);const cdp=await p.context().newCDPSession(p);const r=await cdp.send("Cloudflare.getLiveView",{expiresInMs:300000}) as{devtoolsFrontendUrl?:string};if(!r.devtoolsFrontendUrl)throw new Error("LIVE_VIEW_UNAVAILABLE");return{status:"HUMAN_INTERVENTION_REQUIRED",liveViewUrl:r.devtoolsFrontendUrl,expiresInMs:300000};}}}
+ private async action(a:Action) {
+  switch (a.action) {
+    case "status":
+      return {
+        ok: true,
+        session: this.state.sessionId ? "configured" : "inactive",
+        sessionIdPresent: Boolean(this.state.sessionId),
+        lastError: this.state.lastError ?? null,
+        lastErrorAt: this.state.lastErrorAt ?? null,
+        nextAcquireAt: this.state.nextAcquireAt ?? null,
+        acquisitions: this.state.acquisitions,
+      };
+    case "linkedin_check":
+      return this.withBrowser((b) => this.check(b));
+    case "open":
+      if (!LINKEDIN.test(a.url)) throw new Error("URL_NOT_ALLOWED: LinkedIn only");
+      return this.withBrowser(async (b) => {
+        const p = await this.page(b);
+        await p.goto(a.url, { waitUntil: "domcontentloaded", timeout: 45000 });
+        return { url: p.url(), title: await p.title() };
+      });
+    case "snapshot":
+      return this.withBrowser((b) => this.snap(b));
+    case "click":
+      return this.withBrowser(async (b) => {
+        const p = await this.page(b);
+        await p.locator(a.selector).first().click({ timeout: 15000 });
+        return { ok: true, url: p.url(), title: await p.title() };
+      });
+    case "type":
+      return this.withBrowser(async (b) => {
+        const p = await this.page(b);
+        await p.locator(a.selector).first().fill(a.text, { timeout: 15000 });
+        return { ok: true };
+      });
+    case "back":
+      return this.withBrowser(async (b) => {
+        const p = await this.page(b);
+        await p.goBack({ waitUntil: "domcontentloaded", timeout: 30000 });
+        return { ok: true, url: p.url(), title: await p.title() };
+      });
+    case "live_view":
+      return this.withBrowser(async (b) => {
+        const p = await this.page(b);
+        const cdp = await p.context().newCDPSession(p);
+        const result: any = await cdp.send("Cloudflare.getLiveView", { expiresInMs: 300000 });
+        if (!result?.devtoolsFrontendUrl) throw new Error("LIVE_VIEW_UNAVAILABLE");
+        return {
+          status: "HUMAN_INTERVENTION_REQUIRED",
+          liveViewUrl: result.devtoolsFrontendUrl,
+          expiresInMs: 300000,
+        };
+      });
+  }
+}
  async fetch(req:Request){
   if(req.method!=="POST") return Response.json({ok:false,error:{code:"METHOD_NOT_ALLOWED"}},{status:405});
   const previous=this.busy;
