@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
+export { BrowserSessionDO } from "./browser-session";
 
 interface Env { BROWSER: Fetcher; BROWSER_SESSION: DurableObjectNamespace; }
 
