@@ -36,3 +36,4 @@ export class BrowserSessionDO extends DurableObject<Env>{
     release();
   }
  }
+}
