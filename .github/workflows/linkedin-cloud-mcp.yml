@@ -25,7 +25,7 @@ jobs:
       - id: build
         run: npm run build
       - name: Capture TypeScript diagnostics
-        if: steps.build.outcome == 'failure'
+        if: failure() && steps.build.outcome == 'failure'
         working-directory: .
         run: |
           cd linkedin-cloud-mcp
