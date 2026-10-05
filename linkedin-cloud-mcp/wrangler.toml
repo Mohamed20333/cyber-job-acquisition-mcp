@@ -11,10 +11,6 @@ tag = "v1"
 new_sqlite_classes = ["PlaywrightMCP"]
 
 [[migrations]]
-tag = "v2"
-new_sqlite_classes = ["PlaywrightMCPV2"]
-
-[[migrations]]
 tag = "v3"
 new_sqlite_classes = ["PlaywrightMCPV3"]
 
