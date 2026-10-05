@@ -4,7 +4,7 @@ import { z } from "zod";
 
 interface Env { BROWSER: Fetcher; BROWSER_SESSION: DurableObjectNamespace; }
 
-const handler = createMcpHandler(() => {
+function makeHandler(env: Env) {\n  const handler = createMcpHandler(() => {
   const server = new McpServer({ name: "linkedin-profile-agent", version: "3.0.0" });
   const call = async (env: Env, action: string, payload: Record<string, unknown> = {}) => {
     const id = env.BROWSER_SESSION.idFromName("linkedin-primary");
@@ -43,7 +43,7 @@ export default {
       browser: { configured: Boolean(env.BROWSER), session: "managed-by-durable-object" },
       mcp: { transport: "streamable-http", endpoint: "/mcp" },
     });
-    if (path === "/mcp") return handler(request, env, ctx);
+    if (path === "/mcp") return makeHandler(env)(request, env, ctx);
     if (path === "/sse" || path === "/sse/message") return Response.json({ error: "SSE_DEPRECATED", message: "Use /mcp Streamable HTTP." }, { status: 410 });
     return new Response("Not Found", { status: 404 });
   },
