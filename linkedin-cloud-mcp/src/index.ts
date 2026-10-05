@@ -26,11 +26,9 @@ function makeHandler(env: Env) {
     const server = new McpServer({ name: "linkedin-profile-agent", version: "3.0.0" });
     server.registerTool("browser_status", {
       description: "Inspect the persistent browser session without creating a browser.",
-      inputSchema: z.object({}),
     }, async () => call("status"));
     server.registerTool("linkedin_check_login", {
       description: "Open LinkedIn and report LOGIN_REQUIRED, LOGGED_IN, or HUMAN_INTERVENTION_REQUIRED. No account changes.",
-      inputSchema: z.object({}),
     }, async () => call("linkedin_check"));
     server.registerTool("browser_open", {
       description: "Open a LinkedIn URL in the persistent cloud browser.",
@@ -38,7 +36,6 @@ function makeHandler(env: Env) {
     }, async ({ url }) => call("open", { url }));
     server.registerTool("browser_snapshot", {
       description: "Read current browser URL, title and visible text.",
-      inputSchema: z.object({}),
     }, async () => call("snapshot"));
     server.registerTool("browser_click", {
       description: "Click a visible element by CSS selector.",
@@ -50,11 +47,9 @@ function makeHandler(env: Env) {
     }, async ({ selector, text }) => call("type", { selector, text }));
     server.registerTool("browser_back", {
       description: "Go back one page.",
-      inputSchema: z.object({}),
     }, async () => call("back"));
     server.registerTool("browser_live_view", {
       description: "Return a temporary Cloudflare Live View URL for manual login, MFA, CAPTCHA or verification. Never bypass security controls.",
-      inputSchema: z.object({}),
     }, async () => call("live_view"));
     return server;
   });
