@@ -1,19 +1,15 @@
 name = "linkedin-profile-agent"
 main = "src/index.ts"
-compatibility_date = "2026-09-29"
+compatibility_date = "2026-10-02"
 compatibility_flags = ["nodejs_compat"]
 
 [browser]
 binding = "BROWSER"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["PlaywrightMCP"]
-
-[[migrations]]
-tag = "v3"
-new_sqlite_classes = ["PlaywrightMCPV3"]
-
 [[durable_objects.bindings]]
-name = "MCP_OBJECT"
-class_name = "PlaywrightMCPV3"
+name = "BROWSER_SESSION"
+class_name = "BrowserSessionDO"
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["BrowserSessionDO"]
