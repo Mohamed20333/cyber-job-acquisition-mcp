@@ -1,5 +1,1 @@
-src/browser-session.ts(6,39): error TS2689: Cannot extend an interface 'DurableObject'. Did you mean 'implements'?
-src/browser-session.ts(10,34): error TS2339: Property 'ctx' does not exist on type 'BrowserSessionDO'.
-src/browser-session.ts(12,256): error TS2339: Property 'env' does not exist on type 'BrowserSessionDO'.
-src/browser-session.ts(12,269): error TS2561: Object literal may only specify known properties, but 'keepAlive' does not exist in type 'WorkersLaunchOptions'. Did you mean to write 'keep_alive'?
-src/browser-session.ts(13,116): error TS2339: Property 'env' does not exist on type 'BrowserSessionDO'.
+src/browser-session.ts(13,287): error TS2353: Object literal may only specify known properties, and 'targets' does not exist in type 'WorkersLaunchOptions'.
